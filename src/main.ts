@@ -64,21 +64,22 @@ async function analyzeCode(
 
   for (const file of parsedDiff) {
     if (file.to === "/dev/null") continue; // Ignore deleted files
-    for (const chunk of file.chunks) {
-      const prompt = createPrompt(file, chunk, prDetails);
-      const aiResponse = await getAIResponse(prompt);
-      if (aiResponse) {
-        const newComments = createComment(file, chunk, aiResponse);
-        if (newComments) {
-          comments.push(...newComments);
-        }
+
+    const fullFileContent = await getFileContent(prDetails.owner, prDetails.repo, file.to ?? "");
+    const prompt = createPrompt(file, fullFileContent, prDetails);
+    const aiResponse = await getAIResponse(prompt);
+    if (aiResponse) {
+      const newComments = createComment(file, aiResponse);
+      if (newComments) {
+        comments.push(...newComments);
       }
     }
   }
   return comments;
 }
 
-function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
+function createPrompt(file: File, fullFileContent: string, prDetails: PRDetails): string {
+  const fileExtension = file.to?.split(".").pop() ?? "unknown";
   return `Your task is to review pull requests. Instructions:
 - Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewComment": "<review comment>"}]}
 - Do not give positive comments or compliments.
@@ -87,10 +88,8 @@ function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
 - Use the given description only for the overall context and only comment the code.
 - IMPORTANT: NEVER suggest adding comments to the code.
 
-Review the following code diff in the file "${
-    file.to
-  }" and take the pull request title and description into account when writing the response.
-  
+Review the following code in the file "${file.to}" with extension "${fileExtension}" and take the pull request title and description into account when writing the response.
+
 Pull request title: ${prDetails.title}
 Pull request description:
 
@@ -98,16 +97,27 @@ Pull request description:
 ${prDetails.description}
 ---
 
-Git diff to review:
+Full file content:
 
-\`\`\`diff
-${chunk.content}
-${chunk.changes
-  // @ts-expect-error - ln and ln2 exists where needed
-  .map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
-  .join("\n")}
-\`\`\`
-`;
+\`\`\`${fileExtension}
+${fullFileContent}
+\`\`\``;
+}
+
+async function getFileContent(owner: string, repo: string, path: string): Promise<string> {
+  try {
+    const response = await octokit.repos.getContent({
+      owner,
+      repo,
+      path,
+    });
+    if ("content" in response.data) {
+      return Buffer.from(response.data.content, "base64").toString("utf8");
+    }
+  } catch (error) {
+    console.error(`Error fetching file content for ${path}:`, error);
+  }
+  return "";
 }
 
 async function getAIResponse(prompt: string): Promise<Array<{
@@ -148,7 +158,6 @@ async function getAIResponse(prompt: string): Promise<Array<{
 
 function createComment(
   file: File,
-  chunk: Chunk,
   aiResponses: Array<{
     lineNumber: string;
     reviewComment: string;
