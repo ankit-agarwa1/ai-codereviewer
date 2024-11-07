@@ -87,6 +87,7 @@ function createPrompt(file: File, fullFileContent: string, prDetails: PRDetails)
 - Write the comment in GitHub Markdown format.
 - Use the given description only for the overall context and only comment the code.
 - IMPORTANT: NEVER suggest adding comments to the code.
+- Only return valid JSON without any additional formatting or markdown.
 
 Review the following code in the file "${file.to}" with extension "${fileExtension}" and take the pull request title and description into account when writing the response.
 
@@ -148,7 +149,9 @@ async function getAIResponse(prompt: string): Promise<Array<{
       ],
     });
 
-    const res = response.choices[0].message?.content?.trim() || "{}";
+    let res = response.choices[0].message?.content?.trim() || "{}";
+    // Clean up any markdown formatting if present
+    res = res.replace(/```json|```/g, "");
     return JSON.parse(res).reviews;
   } catch (error) {
     console.error("Error:", error);
